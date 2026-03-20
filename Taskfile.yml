@@ -1,0 +1,20 @@
+version: '3'
+
+# Taskfile for ai-tools-lib-rust
+# Rust library (devtools framework)
+
+includes:
+  common: '../devtools/common/Taskfile.common.yml'
+  .:
+    taskfile: '../devtools/rust/Taskfile.base.yml'
+    dir: '{{.ROOT_DIR}}'
+    flatten: true
+
+vars:
+  PACKAGE: ai-tools-lib-rust
+
+tasks:
+  build:
+    desc: Build the library
+    cmds:
+      - cargo build {{.CLI_ARGS}}

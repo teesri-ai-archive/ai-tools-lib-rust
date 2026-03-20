@@ -1,0 +1,91 @@
+name: Rust AI Tools Lib CI
+
+run-name: rust-ai-tools-lib build started 🚀
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          path: workspace/${{ github.event.repository.name }}
+
+      - name: Checkout devtools
+        uses: actions/checkout@v4
+        with:
+          repository: teesri-ai/devtools
+          token: ${{ secrets.MANISH_GITHUB_PAT }}
+          ref: main
+          path: workspace/devtools
+
+      - name: Checkout python-lambda-helper-lib
+        uses: actions/checkout@v4
+        with:
+          repository: teesri-ai/python-lambda-helper-lib
+          token: ${{ secrets.MANISH_GITHUB_PAT }}
+          ref: main
+          path: workspace/python-lambda-helper-lib
+
+      - name: Checkout flixie-interfaces
+        uses: actions/checkout@v4
+        with:
+          repository: teesri-ai/flixie-interfaces
+          token: ${{ secrets.MANISH_GITHUB_PAT }}
+          ref: main
+          path: workspace/flixie-interfaces
+
+      - name: Checkout fmms-lib-python
+        uses: actions/checkout@v4
+        with:
+          repository: teesri-ai/fmms-lib-python
+          token: ${{ secrets.MANISH_GITHUB_PAT }}
+          ref: main
+          path: workspace/fmms-lib-python
+
+      - name: Checkout ai-tools
+        uses: actions/checkout@v4
+        with:
+          repository: teesri-ai/ai-tools
+          token: ${{ secrets.MANISH_GITHUB_PAT }}
+          ref: main
+          path: workspace/ai-tools
+
+      - name: Checkout flixie-video-ai
+        uses: actions/checkout@v4
+        with:
+          repository: teesri-ai/flixie-video-ai
+          token: ${{ secrets.MANISH_GITHUB_PAT }}
+          ref: main
+          path: workspace/flixie-video-ai
+
+      - name: Checkout video-ai-executor-service
+        uses: actions/checkout@v4
+        with:
+          repository: teesri-ai/video-ai-executor-service
+          token: ${{ secrets.MANISH_GITHUB_PAT }}
+          ref: main
+          path: workspace/video-ai-executor-service
+
+      - name: Run Task CI (lint, unit-test, coverage)
+        uses: ./workspace/devtools/.github/actions/run-task-ci
+        with:
+          working-directory: workspace/${{ github.event.repository.name }}
+          python-version: "3.12"
+          rust-toolchain: "stable"
+          run-bootstrap: "false"
+          run-coverage: "false"
