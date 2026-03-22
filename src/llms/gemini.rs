@@ -2,6 +2,10 @@ use super::base::{BaseLLM, GenerateResponse, LlmError, Message, Tool};
 use super::token_counter::TokenCounter;
 use async_trait::async_trait;
 use log::{debug, info};
+use reqwest::Client;
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 /// Configuration mirrors python defaults.
 pub struct GeminiConfig {
@@ -22,18 +26,161 @@ impl Default for GeminiConfig {
     }
 }
 
-/// Gemini wrapper (stubbed).
+/// Gemini REST client (generateContent with JSON schema).
 pub struct GeminiLLM {
-    _api_key: String,
+    api_key: String,
     config: GeminiConfig,
+    http: Client,
 }
 
 impl GeminiLLM {
     pub fn new(api_key: String, config: Option<GeminiConfig>) -> Self {
         Self {
-            _api_key: api_key,
+            api_key,
             config: config.unwrap_or_default(),
+            http: Client::new(),
         }
+    }
+
+    /// Structured JSON output using `generationConfig.responseSchema` (Gemini 2.x).
+    pub async fn generate_structured_json<T: DeserializeOwned>(
+        &self,
+        model: &str,
+        system_instruction: &str,
+        user_text: &str,
+        response_schema: Value,
+        token_counter: &TokenCounter,
+    ) -> Result<T, LlmError> {
+        let schema = strip_additional_properties(response_schema);
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        );
+        let body = serde_json::json!({
+            "systemInstruction": {
+                "parts": [{ "text": system_instruction }]
+            },
+            "contents": [{
+                "role": "user",
+                "parts": [{ "text": user_text }]
+            }],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": schema,
+            }
+        });
+
+        let resp = self
+            .http
+            .post(&url)
+            .query(&[("key", self.api_key.as_str())])
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| LlmError::Request(format!("Gemini HTTP error: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| LlmError::Request(format!("Gemini read body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(LlmError::Request(format!(
+                "Gemini API status {status}: {text}"
+            )));
+        }
+
+        let parsed: GenerateContentResponse = serde_json::from_str(&text).map_err(|e| {
+            LlmError::Request(format!("Gemini JSON parse error: {e}; body: {text}"))
+        })?;
+
+        if let Some(err) = parsed.error {
+            return Err(LlmError::Request(format!(
+                "{}: {}",
+                err.status.unwrap_or_default(),
+                err.message.unwrap_or_default()
+            )));
+        }
+
+        if let Some(meta) = parsed.usage_metadata {
+            token_counter.add_counts(
+                model,
+                meta.prompt_token_count.unwrap_or(0),
+                meta.candidates_token_count.unwrap_or(0),
+                meta.thoughts_token_count.unwrap_or(0),
+            );
+        }
+
+        let json_text = parsed
+            .candidates
+            .and_then(|c| c.into_iter().next())
+            .and_then(|c| c.content)
+            .and_then(|content| content.parts)
+            .and_then(|parts| parts.into_iter().next())
+            .and_then(|p| p.text)
+            .ok_or(LlmError::InvalidResponse)?;
+
+        serde_json::from_str::<T>(&json_text).map_err(|e| {
+            LlmError::Request(format!("Gemini output JSON decode: {e}; text: {json_text}"))
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct GenerateContentResponse {
+    candidates: Option<Vec<Candidate>>,
+    #[serde(rename = "usageMetadata")]
+    usage_metadata: Option<UsageMetadata>,
+    error: Option<GeminiRestError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Candidate {
+    content: Option<Content>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Content {
+    parts: Option<Vec<Part>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Part {
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UsageMetadata {
+    #[serde(rename = "promptTokenCount")]
+    prompt_token_count: Option<u64>,
+    #[serde(rename = "candidatesTokenCount")]
+    candidates_token_count: Option<u64>,
+    #[serde(rename = "thoughtsTokenCount")]
+    thoughts_token_count: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiRestError {
+    status: Option<String>,
+    message: Option<String>,
+}
+
+fn strip_additional_properties(v: Value) -> Value {
+    match v {
+        Value::Object(mut map) => {
+            map.remove("additionalProperties");
+            let keys: Vec<String> = map.keys().cloned().collect();
+            for k in keys {
+                if let Some(inner) = map.get_mut(&k) {
+                    *inner = strip_additional_properties(inner.clone());
+                }
+            }
+            Value::Object(map)
+        }
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(strip_additional_properties).collect())
+        }
+        other => other,
     }
 }
 
@@ -51,7 +198,7 @@ impl BaseLLM for GeminiLLM {
     ) -> Result<GenerateResponse, LlmError> {
         debug!("GeminiLLM.generate invoked but not implemented");
         Err(LlmError::Request(
-            "Gemini generation not implemented in Rust placeholder".to_string(),
+            "Gemini free-form generate not implemented in Rust".to_string(),
         ))
     }
 
@@ -68,7 +215,7 @@ impl BaseLLM for GeminiLLM {
         T: serde::de::DeserializeOwned + Send + Sync,
     {
         Err(LlmError::Request(
-            "Gemini typed generation not implemented".to_string(),
+            "Use GeminiLLM::generate_structured_json with an explicit responseSchema".to_string(),
         ))
     }
 
@@ -77,7 +224,7 @@ impl BaseLLM for GeminiLLM {
         _messages: &[Message],
         _model: &str,
         _token_counter: Option<&TokenCounter>,
-    ) -> Result<serde_json::Value, LlmError> {
+    ) -> Result<Value, LlmError> {
         Err(LlmError::Request(
             "Gemini completion call not implemented".to_string(),
         ))
@@ -107,5 +254,26 @@ impl BaseLLM for GeminiLLM {
         Err(LlmError::Request(
             "Gemini video generation not implemented".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_additional_removes_nested() {
+        let v = serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "a": { "type": "string", "additionalProperties": true }
+            }
+        });
+        let out = strip_additional_properties(v);
+        let obj = out.as_object().unwrap();
+        assert!(!obj.contains_key("additionalProperties"));
+        let a = obj.get("properties").unwrap()["a"].as_object().unwrap();
+        assert!(!a.contains_key("additionalProperties"));
     }
 }
