@@ -2,7 +2,6 @@ use crate::prompt_manager::templates::PromptTemplate;
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use reqwest::Client;
-use reqwest::header::{AUTHORIZATION, HeaderMap};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -57,6 +56,8 @@ pub enum PromptLayerError {
     Http(#[from] reqwest::Error),
     #[error("template parsing failed: {0}")]
     Parse(String),
+    #[error("PromptLayer API error (status {status}): {body}")]
+    ApiStatus { status: u16, body: String },
     #[error("template not found: {0}")]
     NotFound(String),
 }
@@ -86,9 +87,9 @@ impl PromptLayerClient {
         template: PromptTemplate,
         label: Option<&str>,
     ) -> Result<PromptLayerTemplate, PromptLayerError> {
-        let environment = env::var("ENV").unwrap_or_else(|_| "prod".into());
         let folder_path = template.folder_path();
-        let label = label.or(Some(environment.as_str()));
+        // Keep parity with the Python SDK path (ai-tools), which always targets "prod".
+        let label = label.or(Some("prod"));
 
         info!("Attempting to retrieve template {}", template.name());
 
@@ -130,33 +131,38 @@ impl PromptLayerClient {
         label: Option<&str>,
         folder_path: Option<&str>,
     ) -> Result<Option<PromptLayerTemplate>, PromptLayerError> {
-        let url = format!("{}/templates/get", self.base_url);
-        let mut request = self.client.get(&url);
-
-        let mut params = vec![("template_name", name)];
+        // Use the same endpoint and request shape as the Python PromptLayer SDK:
+        // POST /prompt-templates/{prompt_name} with X-API-KEY + JSON body.
+        let base_url = self.base_url.trim_end_matches('/');
+        let url = format!("{base_url}/prompt-templates/{name}");
+        let mut body = serde_json::json!({
+            "api_key": self.api_key,
+        });
         if let Some(label) = label {
-            params.push(("label", label));
+            body["label"] = serde_json::Value::String(label.to_string());
         }
         if let Some(folder_path) = folder_path {
-            params.push(("folder_path", folder_path));
+            body["folder_path"] = serde_json::Value::String(folder_path.to_string());
         }
 
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            format!("Bearer {}", self.api_key).parse().unwrap(),
-        );
-        request = request.headers(headers).query(&params);
-
-        debug!("Fetching PromptLayer template {} {:?}", name, params);
+        debug!("Fetching PromptLayer template {} with body {}", name, body);
+        let request = self
+            .client
+            .post(&url)
+            .header("X-API-KEY", &self.api_key)
+            .json(&body);
         let response = request.send().await?;
-        if response.status().is_client_error() {
-            warn!(
-                "Template {} could not be located (status={})",
-                name,
-                response.status()
-            );
+        let status = response.status();
+        if status.as_u16() == 404 {
+            warn!("Template {} could not be located (status={})", name, status);
             return Ok(None);
+        }
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(PromptLayerError::ApiStatus {
+                status: status.as_u16(),
+                body,
+            });
         }
 
         let template = response.json::<PromptLayerTemplate>().await?;
