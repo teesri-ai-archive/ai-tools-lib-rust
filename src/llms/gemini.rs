@@ -6,6 +6,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::time::Duration;
 
 /// Configuration mirrors python defaults.
 pub struct GeminiConfig {
@@ -13,6 +14,9 @@ pub struct GeminiConfig {
     pub multimodal_model: String,
     pub cheap_model: String,
     pub default_model: String,
+    /// Per-request HTTP timeout for the Gemini REST API (seconds). Large JSON / reasoning
+    /// responses can exceed short client defaults and fail with read timeouts.
+    pub http_timeout_seconds: u64,
 }
 
 impl Default for GeminiConfig {
@@ -22,6 +26,7 @@ impl Default for GeminiConfig {
             multimodal_model: "gemini-2.5-flash".to_string(),
             cheap_model: "gemini-2.5-flash-lite".to_string(),
             default_model: "gemini-2.5-flash".to_string(),
+            http_timeout_seconds: 600,
         }
     }
 }
@@ -35,10 +40,16 @@ pub struct GeminiLLM {
 
 impl GeminiLLM {
     pub fn new(api_key: String, config: Option<GeminiConfig>) -> Self {
+        let config = config.unwrap_or_default();
+        let timeout = Duration::from_secs(config.http_timeout_seconds);
+        let http = Client::builder()
+            .timeout(timeout)
+            .build()
+            .expect("reqwest Client builder should succeed");
         Self {
             api_key,
-            config: config.unwrap_or_default(),
-            http: Client::new(),
+            config,
+            http,
         }
     }
 
