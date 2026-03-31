@@ -1,4 +1,19 @@
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum PromptPhase {
+    System,
+    User,
+}
+
+impl PromptPhase {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PromptPhase::System => "system",
+            PromptPhase::User => "user",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum PromptCategory {
     ConversationalAi,
     VideoAi,
@@ -8,14 +23,14 @@ pub enum PromptCategory {
 impl PromptCategory {
     pub fn as_str(&self) -> &'static str {
         match self {
-            PromptCategory::ConversationalAi => "conversational_ai",
-            PromptCategory::VideoAi => "video_agent_ai",
-            PromptCategory::SelectionUtils => "selection_utils",
+            PromptCategory::ConversationalAi => "conversational-ai",
+            PromptCategory::VideoAi => "video-ai",
+            PromptCategory::SelectionUtils => "selection-utils",
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum PromptTemplate {
     PromptPreamble,
     UserMessageProcessingSystemPrompt,
@@ -168,5 +183,21 @@ impl PromptTemplate {
 
     pub fn folder_path(&self) -> &'static str {
         self.category().as_str()
+    }
+
+    pub fn phase(&self) -> PromptPhase {
+        match self {
+            PromptTemplate::GetEditedVideoResponseUserPrompt => PromptPhase::User,
+            PromptTemplate::InsertionHintUserPrompt => PromptPhase::User,
+            PromptTemplate::SelectionUtilsUserPrompt => PromptPhase::User,
+            _ => PromptPhase::System,
+        }
+    }
+
+    pub fn template_file_name(&self) -> &'static str {
+        match self.phase() {
+            PromptPhase::System => "system_prompt.j2",
+            PromptPhase::User => "user_prompt.j2",
+        }
     }
 }
