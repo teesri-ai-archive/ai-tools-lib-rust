@@ -1,7 +1,7 @@
 # Rust AI Tools Lib (Rust)
 
 `ai-tools-lib-rust` mirrors the Python `ai-tools` package for Rust consumers.
-It provides token counting, prompt management (@ PromptLayer), selection helpers,
+It provides token counting, prompt management (local prompt templates), selection helpers,
 LLM adapters (OpenAI/Gemini), and gated serialization that respects
 `SkipJsonSchema` semantics. This crate is designed for integration in the
 `flixie-e2e` workspace and exposes the same validation rules and behaviors as

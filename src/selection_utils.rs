@@ -1,8 +1,9 @@
 use crate::llms::base::{GenerateResponse, LlmError, Role};
 use crate::llms::{BaseLLM, Message, TokenCounter};
-use crate::prompt_manager::{PromptTemplate, prompt_layer::PromptLayerError};
+use crate::prompt_manager::{PromptTemplate, prompt_template::PromptTemplateError};
 use async_trait::async_trait;
 use log::info;
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -11,7 +12,7 @@ pub enum SelectionError {
     InvalidInput(String),
     InvalidLLMResponse,
     LlmError(LlmError),
-    PromptLayer(PromptLayerError),
+    PromptTemplate(PromptTemplateError),
 }
 
 impl From<LlmError> for SelectionError {
@@ -20,9 +21,9 @@ impl From<LlmError> for SelectionError {
     }
 }
 
-impl From<PromptLayerError> for SelectionError {
-    fn from(error: PromptLayerError) -> Self {
-        SelectionError::PromptLayer(error)
+impl From<PromptTemplateError> for SelectionError {
+    fn from(error: PromptTemplateError) -> Self {
+        SelectionError::PromptTemplate(error)
     }
 }
 
@@ -31,30 +32,30 @@ pub trait PromptRenderer: Send + Sync {
     async fn render(
         &self,
         template: PromptTemplate,
-        variables: &HashMap<String, String>,
+        variables: &HashMap<String, Value>,
         label: Option<&str>,
-    ) -> Result<String, crate::prompt_manager::prompt_layer::PromptLayerError>;
+    ) -> Result<String, crate::prompt_manager::prompt_template::PromptTemplateError>;
 }
 
-pub struct PromptLayerRenderer {
-    client: crate::prompt_manager::prompt_layer::PromptLayerClient,
+pub struct PromptTemplateRenderer {
+    client: crate::prompt_manager::prompt_template::PromptTemplateClient,
 }
 
-impl PromptLayerRenderer {
-    pub fn new(client: crate::prompt_manager::prompt_layer::PromptLayerClient) -> Self {
+impl PromptTemplateRenderer {
+    pub fn new(client: crate::prompt_manager::prompt_template::PromptTemplateClient) -> Self {
         Self { client }
     }
 }
 
 #[async_trait]
-impl PromptRenderer for PromptLayerRenderer {
+impl PromptRenderer for PromptTemplateRenderer {
     async fn render(
         &self,
         template: PromptTemplate,
-        variables: &HashMap<String, String>,
+        variables: &HashMap<String, Value>,
         label: Option<&str>,
-    ) -> Result<String, crate::prompt_manager::prompt_layer::PromptLayerError> {
-        crate::prompt_manager::prompt_layer::get_and_render_prompt(
+    ) -> Result<String, crate::prompt_manager::prompt_template::PromptTemplateError> {
+        crate::prompt_manager::prompt_template::get_and_render_prompt(
             &self.client,
             template,
             variables,
@@ -104,11 +105,17 @@ where
         .collect::<Vec<_>>()
         .join("\n");
 
-    let mut template_vars = HashMap::new();
-    template_vars.insert("purpose".to_string(), purpose.to_string());
-    template_vars.insert("item_type".to_string(), item_type.to_string());
-    template_vars.insert("labels_str".to_string(), labels_str.clone());
-    template_vars.insert("labeled_items_list".to_string(), labeled_items_list.clone());
+    let mut template_vars: HashMap<String, Value> = HashMap::new();
+    template_vars.insert("purpose".to_string(), Value::String(purpose.to_string()));
+    template_vars.insert(
+        "item_type".to_string(),
+        Value::String(item_type.to_string()),
+    );
+    template_vars.insert("labels_str".to_string(), Value::String(labels_str.clone()));
+    template_vars.insert(
+        "labeled_items_list".to_string(),
+        Value::String(labeled_items_list.clone()),
+    );
 
     let system_prompt = renderer
         .render(

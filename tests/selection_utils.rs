@@ -7,6 +7,7 @@ use ai_tools_lib_rust::{
     selection_utils::{PromptRenderer, SelectionError, choose_the_best_item_for_purpose_from_list},
 };
 use async_trait::async_trait;
+use serde_json::Value;
 use std::collections::HashMap;
 
 struct MockLLM {
@@ -74,15 +75,20 @@ impl PromptRenderer for MockRenderer {
     async fn render(
         &self,
         template: ai_tools_lib_rust::prompt_manager::PromptTemplate,
-        variables: &HashMap<String, String>,
+        variables: &HashMap<String, Value>,
         _label: Option<&str>,
-    ) -> Result<String, ai_tools_lib_rust::prompt_manager::prompt_layer::PromptLayerError> {
+    ) -> Result<String, ai_tools_lib_rust::prompt_manager::prompt_template::PromptTemplateError>
+    {
         let content = match template {
             ai_tools_lib_rust::prompt_manager::PromptTemplate::SelectionUtilsSystemPrompt => {
                 "SYSTEM".to_string()
             }
             ai_tools_lib_rust::prompt_manager::PromptTemplate::SelectionUtilsUserPrompt => {
-                variables.get("purpose").cloned().unwrap_or_default()
+                variables
+                    .get("purpose")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
             }
             _ => "UNKNOWN".to_string(),
         };
