@@ -235,10 +235,9 @@ fn render_prompt_dict_str_str_rejects_non_string_value() {
 }
 
 #[test]
-fn get_prompt_template_returns_not_found_when_prompt_dir_missing_from_embed() {
-    // Embedded ``flixie-prompts`` in this workspace may only ship a subset of enum paths.
-    assert!(matches!(
-        get_prompt_template(PromptTemplate::VideoAnalysisPrompt),
-        Err(PromptTemplateError::NotFound(_))
-    ));
+fn get_prompt_template_loads_known_embedded_prompt() {
+    let prompt = get_prompt_template(PromptTemplate::ProcessFileMessagePrepPrompt)
+        .expect("known embedded prompt should load");
+    assert_eq!(prompt.name, "process_file_message_prep_prompt");
+    assert!(!prompt.template_text.trim().is_empty());
 }

@@ -241,7 +241,7 @@ fn validate_var_type(var_type: &str) -> Result<(), PromptTemplateError> {
 }
 
 fn load_variables_file(prompt_name: &str, dir: &Dir) -> Result<VariablesFile, PromptTemplateError> {
-    let Some(file) = dir.get_file("variables.yml") else {
+    let Some(file) = find_file_in_dir_by_name(dir, "variables.yml") else {
         return Ok(VariablesFile::default());
     };
     let contents = file
@@ -308,8 +308,16 @@ fn load_template_text(
     template: PromptTemplate,
     dir: &Dir,
 ) -> Result<String, PromptTemplateError> {
-    let file = dir.get_file(template.template_file_name()).ok_or_else(|| {
-        PromptTemplateError::NotFound(format!("{}/{}", prompt_name, template.template_file_name()))
+    let file = find_file_in_dir_by_name(dir, template.template_file_name()).ok_or_else(|| {
+        let available_files = dir
+            .files()
+            .map(|f| f.path().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        PromptTemplateError::NotFound(format!(
+            "{}/{} (available_files={available_files:?})",
+            prompt_name,
+            template.template_file_name()
+        ))
     })?;
     file.contents_utf8()
         .map(|text| text.to_string())
@@ -354,7 +362,7 @@ fn load_prompt(template: PromptTemplate) -> Result<PromptTemplateData, PromptTem
     let prompt_name = template.name();
     let dir = prompt_dir(template)?;
     let template_text = load_template_text(prompt_name, template, dir)?;
-    let yml_present = dir.get_file("variables.yml").is_some();
+    let yml_present = find_file_in_dir_by_name(dir, "variables.yml").is_some();
     let variables = load_variables_for_template(prompt_name, dir, template)?;
     let defined_names: HashSet<_> = variables.iter().map(|var| var.name.clone()).collect();
     let referenced = extract_template_variables(&template_text);
@@ -370,6 +378,17 @@ fn load_prompt(template: PromptTemplate) -> Result<PromptTemplateData, PromptTem
         name: prompt_name.into(),
         template_text,
         variables,
+    })
+}
+
+fn find_file_in_dir_by_name<'a>(
+    dir: &'a Dir,
+    file_name: &str,
+) -> Option<&'a include_dir::File<'a>> {
+    dir.files().find(|f| {
+        f.path()
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy() == file_name)
     })
 }
 
