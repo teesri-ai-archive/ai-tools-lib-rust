@@ -65,6 +65,14 @@ jobs:
           ref: main
           path: workspace/ai-tools
 
+      - name: Checkout flixie-prompts
+        uses: actions/checkout@v4
+        with:
+          repository: teesri-ai/flixie-prompts
+          token: ${{ secrets.MANISH_GITHUB_PAT }}
+          ref: main
+          path: workspace/flixie-prompts
+
       - name: Checkout flixie-video-ai
         uses: actions/checkout@v4
         with:
