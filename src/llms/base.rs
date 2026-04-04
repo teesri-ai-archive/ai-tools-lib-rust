@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Role of a chat message.
@@ -29,11 +32,61 @@ impl Message {
 }
 
 /// Tool metadata consumed by the LLM wrappers.
-#[derive(Clone, Debug)]
+pub type ToolFuture = Pin<Box<dyn Future<Output = Result<Value, LlmError>> + Send>>;
+pub type ToolExecutor = Arc<dyn Fn(Value) -> ToolFuture + Send + Sync>;
+
+#[derive(Clone)]
 pub struct Tool {
     pub name: String,
     pub description: String,
     pub parameters: Value,
+    pub executor: Option<ToolExecutor>,
+}
+
+impl std::fmt::Debug for Tool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tool")
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("parameters", &self.parameters)
+            .field("has_executor", &self.executor.is_some())
+            .finish()
+    }
+}
+
+impl Tool {
+    pub fn new(name: String, description: String, parameters: Value) -> Self {
+        Self {
+            name,
+            description,
+            parameters,
+            executor: None,
+        }
+    }
+
+    pub fn with_executor(
+        name: String,
+        description: String,
+        parameters: Value,
+        executor: ToolExecutor,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            parameters,
+            executor: Some(executor),
+        }
+    }
+
+    pub async fn invoke(&self, args: Value) -> Result<Value, LlmError> {
+        let executor = self.executor.as_ref().ok_or_else(|| {
+            LlmError::Request(format!(
+                "Tool '{}' was requested but has no executor",
+                self.name
+            ))
+        })?;
+        executor(args).await
+    }
 }
 
 /// Response returned by the generic `generate()` method.
@@ -97,4 +150,32 @@ pub trait BaseLLM: Send + Sync {
         output_path: &str,
         token_counter: &super::token_counter::TokenCounter,
     ) -> Result<String, LlmError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn tool_invoke_without_executor_returns_error() {
+        let tool = Tool::new(
+            "echo".to_string(),
+            "Echo tool".to_string(),
+            serde_json::json!({"type":"object"}),
+        );
+        let result = tool.invoke(serde_json::json!({"value":"x"})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn tool_invoke_with_executor_returns_value() {
+        let tool = Tool::with_executor(
+            "echo".to_string(),
+            "Echo tool".to_string(),
+            serde_json::json!({"type":"object"}),
+            Arc::new(|args| Box::pin(async move { Ok(args) })),
+        );
+        let result = tool.invoke(serde_json::json!({"value":"ok"})).await.unwrap();
+        assert_eq!(result, serde_json::json!({"value":"ok"}));
+    }
 }
