@@ -127,8 +127,7 @@ impl GeminiLLM {
             .and_then(|c| c.into_iter().next())
             .and_then(|c| c.content)
             .and_then(|content| content.parts)
-            .and_then(|parts| parts.into_iter().next())
-            .and_then(|p| p.text)
+            .and_then(|parts| parts.into_iter().find_map(|p| p.text))
             .ok_or(LlmError::InvalidResponse)?;
 
         serde_json::from_str::<T>(&json_text).map_err(|e| {
@@ -156,8 +155,21 @@ struct Content {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct Part {
     text: Option<String>,
+    #[serde(rename = "functionCall")]
+    function_call: Option<FunctionCall>,
+    #[serde(rename = "thoughtSignature")]
+    thought_signature: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct FunctionCall {
+    name: Option<String>,
+    id: Option<String>,
+    args: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -286,5 +298,60 @@ mod tests {
         assert!(!obj.contains_key("additionalProperties"));
         let a = obj.get("properties").unwrap()["a"].as_object().unwrap();
         assert!(!a.contains_key("additionalProperties"));
+    }
+
+    #[test]
+    fn response_part_deserializes_function_call_and_thought_signature() {
+        let payload = serde_json::json!({
+            "text": null,
+            "functionCall": {
+                "name": "get_full_transcript",
+                "id": "abc123",
+                "args": {}
+            },
+            "thoughtSignature": "Zm9vYmFy"
+        });
+        let part: Part = serde_json::from_value(payload).unwrap();
+        assert!(part.text.is_none());
+        assert!(part.function_call.is_some());
+        assert_eq!(
+            part.function_call.as_ref().and_then(|fc| fc.name.as_deref()),
+            Some("get_full_transcript")
+        );
+        assert_eq!(
+            part.function_call.as_ref().and_then(|fc| fc.id.as_deref()),
+            Some("abc123")
+        );
+        assert_eq!(part.thought_signature.as_deref(), Some("Zm9vYmFy"));
+    }
+
+    #[test]
+    fn first_text_part_is_selected_even_after_function_call_part() {
+        let content = Content {
+            parts: Some(vec![
+                Part {
+                    text: None,
+                    function_call: Some(FunctionCall {
+                        name: Some("get_full_transcript".to_string()),
+                        id: Some("abc123".to_string()),
+                        args: Some(serde_json::json!({})),
+                    }),
+                    thought_signature: Some("sig".to_string()),
+                },
+                Part {
+                    text: Some(r#"{"answer":"ok"}"#.to_string()),
+                    function_call: None,
+                    thought_signature: None,
+                },
+            ]),
+        };
+
+        let extracted = content
+            .parts
+            .unwrap()
+            .into_iter()
+            .find_map(|p| p.text)
+            .unwrap();
+        assert_eq!(extracted, r#"{"answer":"ok"}"#);
     }
 }
