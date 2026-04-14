@@ -1,7 +1,7 @@
 use super::base::{BaseLLM, GenerateResponse, LlmError, Message, Tool};
 use super::token_counter::TokenCounter;
 use async_trait::async_trait;
-use log::{debug, info};
+use log::{debug, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -80,6 +80,8 @@ impl GeminiLLM {
             }
         });
 
+        log_gemini_request(system_instruction, Some(user_text), &body);
+
         let resp = self
             .http
             .post(&url)
@@ -105,15 +107,17 @@ impl GeminiLLM {
             LlmError::Request(format!("Gemini JSON parse error: {e}; body: {text}"))
         })?;
 
-        if let Some(err) = parsed.error {
+        log_gemini_response(&parsed);
+
+        if let Some(ref err) = parsed.error {
             return Err(LlmError::Request(format!(
                 "{}: {}",
-                err.status.unwrap_or_default(),
-                err.message.unwrap_or_default()
+                err.status.as_deref().unwrap_or(""),
+                err.message.as_deref().unwrap_or("")
             )));
         }
 
-        if let Some(meta) = parsed.usage_metadata {
+        if let Some(ref meta) = parsed.usage_metadata {
             token_counter.add_counts(
                 model,
                 meta.prompt_token_count.unwrap_or(0),
@@ -122,14 +126,8 @@ impl GeminiLLM {
             );
         }
 
-        let json_text = parsed
-            .candidates
-            .and_then(|c| c.into_iter().next())
-            .and_then(|c| c.content)
-            .and_then(|content| content.parts)
-            .and_then(|parts| parts.into_iter().next())
-            .and_then(|p| p.text)
-            .ok_or(LlmError::InvalidResponse)?;
+        let json_text =
+            extract_last_non_thought_json_text(&parsed).ok_or(LlmError::InvalidResponse)?;
 
         serde_json::from_str::<T>(&json_text).map_err(|e| {
             LlmError::Request(format!("Gemini output JSON decode: {e}; text: {json_text}"))
@@ -137,17 +135,94 @@ impl GeminiLLM {
     }
 }
 
+fn log_gemini_request(system_instruction: &str, user_messages: Option<&str>, api_body: &Value) {
+    info!(
+        "Gemini request — system instruction:\n{}",
+        if system_instruction.is_empty() {
+            "(none)"
+        } else {
+            system_instruction
+        }
+    );
+    if let Some(msgs) = user_messages {
+        info!("Gemini request — user messages:\n{msgs}");
+    }
+    let contents_str =
+        serde_json::to_string_pretty(api_body).unwrap_or_else(|_| api_body.to_string());
+    info!("Gemini request — API contents:\n{contents_str}");
+}
+
+fn log_gemini_response(parsed: &GenerateContentResponse) {
+    match parsed.candidates.as_ref() {
+        None => {
+            info!("Gemini response — text: {parsed:?}");
+        }
+        Some(c) if c.is_empty() => {
+            info!("Gemini response — text: {parsed:?}");
+        }
+        Some(cands) => {
+            let c0 = &cands[0];
+            let parts_slice: &[Part] = c0
+                .content
+                .as_ref()
+                .and_then(|c| c.parts.as_deref())
+                .unwrap_or(&[]);
+            if parts_slice.is_empty() {
+                warn!(
+                    "Gemini response had no content.parts: finish_reason={:?} prompt_feedback={:?}",
+                    c0.finish_reason, parsed.prompt_feedback
+                );
+            }
+            for part in parts_slice {
+                let Some(t) = part.text.as_ref() else {
+                    continue;
+                };
+                if part.thought == Some(true) {
+                    info!("Gemini response — thought: {t}");
+                } else {
+                    info!("Gemini response — text: {t}");
+                }
+            }
+        }
+    }
+}
+
+/// Last text part that is not a reasoning "thought" segment (models may emit thought parts first).
+fn extract_last_non_thought_json_text(parsed: &GenerateContentResponse) -> Option<String> {
+    let parts = parsed
+        .candidates
+        .as_ref()?
+        .first()?
+        .content
+        .as_ref()?
+        .parts
+        .as_ref()?;
+    let mut last: Option<String> = None;
+    for p in parts {
+        if let Some(t) = p.text.as_ref()
+            && p.thought != Some(true)
+        {
+            last = Some(t.clone());
+        }
+    }
+    last
+}
+
 #[derive(Debug, Deserialize)]
 struct GenerateContentResponse {
     candidates: Option<Vec<Candidate>>,
     #[serde(rename = "usageMetadata")]
     usage_metadata: Option<UsageMetadata>,
+    #[serde(rename = "promptFeedback")]
+    prompt_feedback: Option<Value>,
     error: Option<GeminiRestError>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Candidate {
     content: Option<Content>,
+    #[serde(rename = "finishReason")]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,6 +233,8 @@ struct Content {
 #[derive(Debug, Deserialize)]
 struct Part {
     text: Option<String>,
+    #[serde(default)]
+    thought: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

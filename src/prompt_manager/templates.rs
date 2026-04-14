@@ -66,6 +66,7 @@ pub enum PromptTemplate {
     BestPronunciationSelectionPrompt,
     LocateDisfluenciesPrompt,
     VideoAnalysisPrompt,
+    TranscriptionSentenceCorrectionPrompt,
     SelectionUtilsSystemPrompt,
     SelectionUtilsUserPrompt,
 }
@@ -133,6 +134,9 @@ impl PromptTemplate {
             }
             PromptTemplate::LocateDisfluenciesPrompt => "locate_disfluencies_prompt",
             PromptTemplate::VideoAnalysisPrompt => "video_analysis_prompt",
+            PromptTemplate::TranscriptionSentenceCorrectionPrompt => {
+                "transcription_sentence_correction_prompt"
+            }
             PromptTemplate::SelectionUtilsSystemPrompt => "selection_utils_system_prompt",
             PromptTemplate::SelectionUtilsUserPrompt => "selection_utils_user_prompt",
         }
@@ -176,6 +180,7 @@ impl PromptTemplate {
             PromptTemplate::BestPronunciationSelectionPrompt => PromptCategory::VideoAi,
             PromptTemplate::LocateDisfluenciesPrompt => PromptCategory::VideoAi,
             PromptTemplate::VideoAnalysisPrompt => PromptCategory::VideoAi,
+            PromptTemplate::TranscriptionSentenceCorrectionPrompt => PromptCategory::VideoAi,
             PromptTemplate::SelectionUtilsSystemPrompt => PromptCategory::SelectionUtils,
             PromptTemplate::SelectionUtilsUserPrompt => PromptCategory::SelectionUtils,
         }
